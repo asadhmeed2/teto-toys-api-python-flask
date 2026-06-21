@@ -1,0 +1,56 @@
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+env/
+ENV/
+
+# Environment files
+.env
+.env.* 
+instance/
+
+# Packaging
+build/
+dist/
+*.egg-info/
+pip-wheel-metadata/
+
+# Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+.cache
+nosetests.xml
+coverage.xml
+
+# Migrations & DB
+*.sqlite3
+*.db
+migrations/   # include only if you don't want migration files tracked
+
+# IDEs / editors
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Logs
+*.log
+logs/
+*.out
+
+# Jupyter
+.ipynb_checkpoints/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Wheels / caches
+pip-log.txt
+pip-delete-this-directory.txt
