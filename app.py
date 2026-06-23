@@ -12,6 +12,10 @@ CORS(app, origins="http://localhost:4200")
 def health():
     return jsonify({'status': 'OK'}), 200
 
+@app.route('/', methods=['GET'])
+def root():
+    return jsonify({'flask status': 'OK'}), 200
+
 if __name__ == '__main__':
     port = int(os.getenv('PORT', 5000))
     app.run(debug=True, port=port)
