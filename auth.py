@@ -1,18 +1,19 @@
-from flask import Blueprint, jsonify, request, make_response
+from flask import Blueprint, jsonify, request, make_response, current_app
 import os
 import jwt
 from datetime import datetime, timedelta, timezone
 
 auth_bp = Blueprint('auth', __name__)
 
-# In-memory refresh token store (resets on restart; swap for Redis/DB in production)
-refresh_token_store = set()
-
 ISSUER = 'tatotoys-api'
 AUDIENCE = 'tatotoys-frontend'
+REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60  # 7 days in seconds
 
 def get_secret():
     return os.getenv('JWT_SECRET', 'SuperSecretKeyForTetoToysTokenAuth2026')
+
+def get_redis():
+    return current_app.extensions['redis']
 
 def generate_token(email, expire_delta, token_type='access'):
     payload = {
@@ -38,7 +39,7 @@ def make_refresh_cookie_response(response_data, refresh_token, status=200):
         httponly=True,
         samesite='Strict',
         secure=is_production,
-        max_age=7 * 24 * 60 * 60,  # 7 days in seconds
+        max_age=REFRESH_TOKEN_TTL,
         path='/',
     )
     return resp
@@ -59,7 +60,8 @@ def login():
         access_token = generate_token(email, timedelta(minutes=15))
         refresh_token = generate_token(email, timedelta(days=7), token_type='refresh')
 
-        refresh_token_store.add(refresh_token)
+        # Store refresh token in Redis with 7-day TTL
+        get_redis().setex(f'refresh:{refresh_token}', REFRESH_TOKEN_TTL, '1')
 
         return make_refresh_cookie_response(
             {'access_token': access_token, 'token_type': 'Bearer', 'expires_in': 900},
@@ -72,14 +74,14 @@ def login():
 def refresh():
     refresh_token = request.cookies.get('refresh_token')
 
-    if not refresh_token or refresh_token not in refresh_token_store:
+    if not refresh_token or not get_redis().exists(f'refresh:{refresh_token}'):
         return jsonify({'error': 'invalid_token', 'error_description': 'Missing or invalid refresh token.'}), 401
 
     # Rotate: invalidate old token
-    refresh_token_store.discard(refresh_token)
+    get_redis().delete(f'refresh:{refresh_token}')
 
     try:
-        # Token already validated via store — decode without verifying expiry
+        # Token already validated via Redis — decode without verifying expiry
         decoded = jwt.decode(
             refresh_token,
             get_secret(),
@@ -94,7 +96,7 @@ def refresh():
     new_access_token = generate_token(email, timedelta(minutes=15))
     new_refresh_token = generate_token(email, timedelta(days=7), token_type='refresh')
 
-    refresh_token_store.add(new_refresh_token)
+    get_redis().setex(f'refresh:{new_refresh_token}', REFRESH_TOKEN_TTL, '1')
 
     return make_refresh_cookie_response(
         {'access_token': new_access_token, 'token_type': 'Bearer', 'expires_in': 900},
@@ -105,7 +107,7 @@ def refresh():
 def logout():
     refresh_token = request.cookies.get('refresh_token')
     if refresh_token:
-        refresh_token_store.discard(refresh_token)
+        get_redis().delete(f'refresh:{refresh_token}')
 
     resp = make_response(jsonify({'message': 'Logged out successfully'}), 200)
     resp.delete_cookie('refresh_token', path='/')

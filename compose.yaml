@@ -6,7 +6,10 @@ services:
       - .env
     environment:
       FLASK_ENV: production
-      CORS_ORIGIN: http://localhost:4200
+      CORS_ORIGIN: ${CORS_ORIGIN}
+      REDIS_HOST: shared_redis
+      REDIS_PORT: ${REDIS_PORT}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
     restart: unless-stopped
