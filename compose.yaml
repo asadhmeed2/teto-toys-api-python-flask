@@ -13,3 +13,9 @@ services:
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
     restart: unless-stopped
+    networks:
+      - infrastructure_network
+
+networks:
+  infrastructure_network:
+    external: true
