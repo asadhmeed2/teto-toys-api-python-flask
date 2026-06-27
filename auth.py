@@ -112,3 +112,24 @@ def logout():
     resp = make_response(jsonify({'message': 'Logged out successfully'}), 200)
     resp.delete_cookie('refresh_token', path='/')
     return resp
+
+@auth_bp.route('/me', methods=['GET'])
+def me():
+    auth_header = request.headers.get('Authorization', '')
+    if not auth_header.lower().startswith('bearer '):
+        return jsonify({'error': 'unauthorized', 'error_description': 'Missing or invalid Authorization header.'}), 401
+
+    token = auth_header[7:]
+    try:
+        decoded = jwt.decode(
+            token,
+            get_secret(),
+            algorithms=['HS256'],
+            issuer=ISSUER,
+            audience=AUDIENCE,
+        )
+        return jsonify({'email': decoded['email'], 'role': decoded.get('role', 'User')}), 200
+    except jwt.ExpiredSignatureError:
+        return jsonify({'error': 'unauthorized', 'error_description': 'Token has expired.'}), 401
+    except Exception:
+        return jsonify({'error': 'unauthorized', 'error_description': 'Token is invalid or expired.'}), 401
