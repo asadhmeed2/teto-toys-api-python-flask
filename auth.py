@@ -1,6 +1,9 @@
 from flask import Blueprint, jsonify, request, make_response, current_app
 import os
+import re
+import uuid
 import jwt
+import bcrypt
 from datetime import datetime, timedelta, timezone
 
 auth_bp = Blueprint('auth', __name__)
@@ -112,6 +115,64 @@ def logout():
     resp = make_response(jsonify({'message': 'Logged out successfully'}), 200)
     resp.delete_cookie('refresh_token', path='/')
     return resp
+
+@auth_bp.route('/register', methods=['POST'])
+def register():
+    data = request.get_json() or {}
+    first_name = data.get('first_name', '').strip()
+    last_name = data.get('last_name', '').strip()
+    email = data.get('email', '').strip()
+    password = data.get('password', '')
+    confirm_password = data.get('confirm_password', '')
+    is_adult = data.get('is_adult', False)
+    terms_accepted = data.get('terms_accepted', False)
+    marketing_opt_in = data.get('marketing_opt_in', False)
+
+    # --- Required field checks ---
+    if not first_name or not last_name or not email or not password or not confirm_password:
+        return jsonify({'error': 'invalid_request', 'error_description': 'All fields are required.'}), 400
+
+    # --- Email format validation ---
+    email_regex = r'^[^\s@]+@[^\s@]+\.[^\s@]+$'
+    if not re.match(email_regex, email):
+        return jsonify({'error': 'invalid_request', 'error_description': 'Please enter a valid email address.'}), 400
+
+    # --- Password strength ---
+    if len(password) < 8:
+        return jsonify({'error': 'invalid_request', 'error_description': 'Password must be at least 8 characters.'}), 400
+
+    # --- Passwords match ---
+    if password != confirm_password:
+        return jsonify({'error': 'invalid_request', 'error_description': 'Passwords do not match.'}), 400
+
+    # --- Compliance checks ---
+    if not is_adult:
+        return jsonify({'error': 'invalid_request', 'error_description': 'You must confirm that you are 18 years or older.'}), 400
+
+    if not terms_accepted:
+        return jsonify({'error': 'invalid_request', 'error_description': 'You must accept the Terms of Service and Privacy Policy.'}), 400
+
+    # --- Hash password ---
+    password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt(rounds=12)).decode('utf-8')
+
+    # --- Stub response (no DB yet) ---
+    user_id = str(uuid.uuid4())
+    now = datetime.now(timezone.utc).isoformat()
+
+    return jsonify({
+        'message': 'Account created successfully.',
+        'user': {
+            'user_id': user_id,
+            'email': email,
+            'first_name': first_name,
+            'last_name': last_name,
+            'is_adult': True,
+            'terms_accepted_at': now,
+            'terms_version': '1.0',
+            'marketing_opt_in': bool(marketing_opt_in),
+            'created_at': now,
+        },
+    }), 201
 
 @auth_bp.route('/me', methods=['GET'])
 def me():
