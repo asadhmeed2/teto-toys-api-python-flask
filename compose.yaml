@@ -10,6 +10,11 @@ services:
       REDIS_HOST: shared_redis
       REDIS_PORT: ${REDIS_PORT}
       REDIS_PASSWORD: ${REDIS_PASSWORD}
+      DB_HOST: shared_mysql
+      DB_PORT: ${DB_PORT}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
     ports:
       - "${PORT:-8000}:${PORT:-8000}"
     restart: unless-stopped

@@ -5,6 +5,7 @@ import uuid
 import jwt
 import bcrypt
 from datetime import datetime, timedelta, timezone
+from services.db import db, User
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -59,9 +60,26 @@ def login():
     if len(password) < 8:
         return jsonify({'error': 'invalid_request', 'error_description': 'Password must be at least 8 characters.'}), 400
 
-    if email == 'admin@tetotoys.com' and password == 'password123':
-        access_token = generate_token(email, timedelta(minutes=15))
-        refresh_token = generate_token(email, timedelta(days=7), token_type='refresh')
+    try:
+        # Look up user by email
+        user = User.query.filter_by(email=email).first()
+
+        if not user:
+            return jsonify({'error': 'invalid_grant', 'error_description': 'Invalid email or password.'}), 401
+
+        if not user.is_active:
+            return jsonify({'error': 'invalid_grant', 'error_description': 'Account is deactivated.'}), 401
+
+        # Verify password against stored hash
+        if not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
+            return jsonify({'error': 'invalid_grant', 'error_description': 'Invalid email or password.'}), 401
+
+        # Update last_login timestamp
+        user.last_login = datetime.now(timezone.utc)
+        db.session.commit()
+
+        access_token = generate_token(user.email, timedelta(minutes=15))
+        refresh_token = generate_token(user.email, timedelta(days=7), token_type='refresh')
 
         # Store refresh token in Redis with 7-day TTL
         get_redis().setex(f'refresh:{refresh_token}', REFRESH_TOKEN_TTL, '1')
@@ -70,8 +88,10 @@ def login():
             {'access_token': access_token, 'token_type': 'Bearer', 'expires_in': 900},
             refresh_token,
         )
-
-    return jsonify({'error': 'invalid_grant', 'error_description': 'Invalid email or password.'}), 401
+    except Exception as e:
+        db.session.rollback()
+        current_app.logger.error(f'Login DB error: {e}')
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500
 
 @auth_bp.route('/refresh', methods=['POST'])
 def refresh():
@@ -155,23 +175,35 @@ def register():
     # --- Hash password ---
     password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt(rounds=12)).decode('utf-8')
 
-    # --- Stub response (no DB yet) ---
-    user_id = str(uuid.uuid4())
-    now = datetime.now(timezone.utc).isoformat()
+    # --- Persist to MySQL ---
+    now = datetime.now(timezone.utc)
+    user = User(
+        user_id=str(uuid.uuid4()),
+        email=email,
+        password_hash=password_hash,
+        first_name=first_name,
+        last_name=last_name,
+        is_adult=True,
+        terms_accepted_at=now,
+        terms_version='1.0',
+        marketing_opt_in=bool(marketing_opt_in),
+        created_at=now,
+    )
+
+    try:
+        db.session.add(user)
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        # Check for duplicate email (MySQL error code 1062)
+        if 'Duplicate entry' in str(e):
+            return jsonify({'error': 'conflict', 'error_description': 'An account with this email already exists.'}), 409
+        current_app.logger.error(f'Register DB error: {e}')
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500
 
     return jsonify({
         'message': 'Account created successfully.',
-        'user': {
-            'user_id': user_id,
-            'email': email,
-            'first_name': first_name,
-            'last_name': last_name,
-            'is_adult': True,
-            'terms_accepted_at': now,
-            'terms_version': '1.0',
-            'marketing_opt_in': bool(marketing_opt_in),
-            'created_at': now,
-        },
+        'user': user.to_dict(),
     }), 201
 
 @auth_bp.route('/me', methods=['GET'])
