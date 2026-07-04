@@ -48,4 +48,4 @@ COPY . .
 EXPOSE 8000
 
 # Run the application.
-CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8000", "--control-socket", "/tmp/gunicorn.ctl", "app:app"]
+CMD ["gunicorn", "-w", "4", "-b", "0.0.0.0:8000", "run:app"]

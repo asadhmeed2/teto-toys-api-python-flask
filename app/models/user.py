@@ -1,7 +1,4 @@
-from flask_sqlalchemy import SQLAlchemy
-
-# Single SQLAlchemy instance — initialized in app.py via db.init_app(app)
-db = SQLAlchemy()
+from app.extensions import db
 
 
 class User(db.Model):
