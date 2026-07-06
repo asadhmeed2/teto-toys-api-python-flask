@@ -24,9 +24,9 @@ def _redis():
     return current_app.extensions['redis']
 
 
-def _generate_token(email, expire_delta, token_type='access'):
+def _generate_token(user_id, expire_delta, token_type='access'):
     payload = {
-        'sub': email, 'email': email, 'role': 'User',
+        'sub': user_id, 'role': 'User',
         'exp': datetime.now(timezone.utc) + expire_delta,
         'iss': ISSUER, 'aud': AUDIENCE,
     }
@@ -65,8 +65,8 @@ def login():
         user.last_login = datetime.now(timezone.utc)
         db.session.commit()
 
-        access_token = _generate_token(user.email, timedelta(minutes=15))
-        refresh_token = _generate_token(user.email, timedelta(days=7), 'refresh')
+        access_token = _generate_token(user.user_id, timedelta(minutes=15))
+        refresh_token = _generate_token(user.user_id, timedelta(days=7), 'refresh')
         _redis().setex(f'refresh:{refresh_token}', REFRESH_TOKEN_TTL, '1')
 
         resp = make_response(jsonify({'access_token': access_token, 'token_type': 'Bearer', 'expires_in': 900}), 200)
@@ -88,12 +88,12 @@ def refresh():
 
     try:
         decoded = jwt.decode(refresh_token, _secret(), algorithms=['HS256'], audience=AUDIENCE, options={'verify_exp': False})
-        email = decoded['email']
+        user_id = decoded['sub']
     except Exception:
         return jsonify({'error': 'invalid_token', 'error_description': 'Malformed refresh token.'}), 401
 
-    new_access = _generate_token(email, timedelta(minutes=15))
-    new_refresh = _generate_token(email, timedelta(days=7), 'refresh')
+    new_access = _generate_token(user_id, timedelta(minutes=15))
+    new_refresh = _generate_token(user_id, timedelta(days=7), 'refresh')
     _redis().setex(f'refresh:{new_refresh}', REFRESH_TOKEN_TTL, '1')
 
     resp = make_response(jsonify({'access_token': new_access, 'token_type': 'Bearer', 'expires_in': 900}), 200)
@@ -164,7 +164,7 @@ def me():
         return jsonify({'error': 'unauthorized', 'error_description': 'Missing or invalid Authorization header.'}), 401
     try:
         decoded = jwt.decode(auth_header[7:], _secret(), algorithms=['HS256'], issuer=ISSUER, audience=AUDIENCE)
-        return jsonify({'email': decoded['email'], 'role': decoded.get('role', 'User')}), 200
+        return jsonify({'userId': decoded['sub'], 'role': decoded.get('role', 'User')}), 200
     except jwt.ExpiredSignatureError:
         return jsonify({'error': 'unauthorized', 'error_description': 'Token has expired.'}), 401
     except Exception:
