@@ -127,3 +127,23 @@ def get_parts():
         }), 200
     except Exception as e:
         return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
+
+
+# ponytail: GET /categories (public storefront endpoint)
+@products_bp.route('/categories', methods=['GET'])
+def get_categories():
+    try:
+        items_sql = "SELECT id, name, slug FROM categories ORDER BY name ASC"
+        rows = db.session.execute(db.text(items_sql)).fetchall()
+        
+        items = []
+        for row in rows:
+            items.append({
+                'id': row[0],
+                'name': row[1],
+                'slug': row[2]
+            })
+            
+        return jsonify(items), 200
+    except Exception as e:
+        return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
