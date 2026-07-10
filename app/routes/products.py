@@ -10,6 +10,7 @@ def get_products():
     page = request.args.get('page', 1, type=int)
     page_size = request.args.get('pageSize', 10, type=int)
     search = request.args.get('search', '', type=str)
+    category = request.args.get('category', 'All', type=str)
 
     if page < 1:
         page = 1
@@ -19,13 +20,27 @@ def get_products():
     offset = (page - 1) * page_size
 
     try:
-        count_sql = "SELECT COUNT(1) AS count FROM products"
-        items_sql = "SELECT product_id, title, subtitle, description, category, subcategory, price, image_urls FROM products"
+        count_sql = "SELECT COUNT(1) AS count FROM products WHERE is_deleted = 0 AND is_displayed = 1"
+        items_sql = "SELECT product_id, title, subtitle, description, category, subcategory, price, image_urls FROM products WHERE is_deleted = 0 AND is_displayed = 1"
         params = {}
 
+        filter_by_category = False
+        category_id = None
+        if category and category.lower() != 'all':
+            try:
+                category_id = int(category)
+                filter_by_category = True
+            except ValueError:
+                pass
+
+        if filter_by_category:
+            count_sql += " AND category = :category_id"
+            items_sql += " AND category = :category_id"
+            params['category_id'] = category_id
+
         if search:
-            count_sql += " WHERE title LIKE :search OR description LIKE :search"
-            items_sql += " WHERE title LIKE :search OR description LIKE :search"
+            count_sql += " AND (title LIKE :search OR description LIKE :search)"
+            items_sql += " AND (title LIKE :search OR description LIKE :search)"
             params['search'] = f"%{search}%"
 
         items_sql += " ORDER BY created_at DESC LIMIT :limit OFFSET :offset"
