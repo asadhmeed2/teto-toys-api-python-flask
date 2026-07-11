@@ -148,7 +148,7 @@ def get_parts():
 @products_bp.route('/categories', methods=['GET'])
 def get_categories():
     try:
-        items_sql = "SELECT id, name, slug FROM categories ORDER BY name ASC"
+        items_sql = "SELECT id, name, slug FROM categories WHERE number_of_active_products > 0 ORDER BY name ASC"
         rows = db.session.execute(db.text(items_sql)).fetchall()
         
         items = []
