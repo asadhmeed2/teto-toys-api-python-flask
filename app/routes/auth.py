@@ -24,7 +24,7 @@ def _redis():
     return current_app.extensions['redis']
 
 
-def _generate_token(user_id, expire_delta, token_type='access'):
+def _generate_token(user_id, expire_delta, token_type='access', first_name=None, last_name=None):
     payload = {
         'sub': user_id, 'role': 'User',
         'exp': datetime.now(timezone.utc) + expire_delta,
@@ -32,6 +32,10 @@ def _generate_token(user_id, expire_delta, token_type='access'):
     }
     if token_type == 'refresh':
         payload['token_type'] = 'refresh'
+    if first_name:
+        payload['firstName'] = first_name
+    if last_name:
+        payload['lastName'] = last_name
     return jwt.encode(payload, _secret(), algorithm='HS256')
 
 
@@ -66,7 +70,7 @@ def login():
         db.session.commit()
 
         access_token = _generate_token(user.user_id, timedelta(minutes=15))
-        refresh_token = _generate_token(user.user_id, timedelta(days=7), 'refresh')
+        refresh_token = _generate_token(user.user_id, timedelta(days=7), 'refresh', user.first_name, user.last_name)
         _redis().setex(f'refresh:{refresh_token}', REFRESH_TOKEN_TTL, '1')
 
         resp = make_response(jsonify({'access_token': access_token, 'token_type': 'Bearer', 'expires_in': 900}), 200)
@@ -84,8 +88,6 @@ def refresh():
     if not refresh_token or not _redis().exists(f'refresh:{refresh_token}'):
         return jsonify({'error': 'invalid_token', 'error_description': 'Missing or invalid refresh token.'}), 401
 
-    _redis().delete(f'refresh:{refresh_token}')
-
     try:
         decoded = jwt.decode(refresh_token, _secret(), algorithms=['HS256'], audience=AUDIENCE, options={'verify_exp': False})
         user_id = decoded['sub']
@@ -93,12 +95,8 @@ def refresh():
         return jsonify({'error': 'invalid_token', 'error_description': 'Malformed refresh token.'}), 401
 
     new_access = _generate_token(user_id, timedelta(minutes=15))
-    new_refresh = _generate_token(user_id, timedelta(days=7), 'refresh')
-    _redis().setex(f'refresh:{new_refresh}', REFRESH_TOKEN_TTL, '1')
 
-    resp = make_response(jsonify({'access_token': new_access, 'token_type': 'Bearer', 'expires_in': 900}), 200)
-    _set_refresh_cookie(resp, new_refresh)
-    return resp
+    return jsonify({'access_token': new_access, 'token_type': 'Bearer', 'expires_in': 900}), 200
 
 
 @auth_bp.route('/logout', methods=['POST'])
@@ -164,11 +162,26 @@ def me():
         return jsonify({'error': 'unauthorized', 'error_description': 'Missing or invalid Authorization header.'}), 401
     try:
         decoded = jwt.decode(auth_header[7:], _secret(), algorithms=['HS256'], issuer=ISSUER, audience=AUDIENCE)
-        return jsonify({'userId': decoded['sub'], 'role': decoded.get('role', 'User')}), 200
     except jwt.ExpiredSignatureError:
         return jsonify({'error': 'unauthorized', 'error_description': 'Token has expired.'}), 401
     except Exception:
         return jsonify({'error': 'unauthorized', 'error_description': 'Token is invalid or expired.'}), 401
+
+    # The refresh token carries first/last name — pull it from there for the full profile
+    refresh_token = request.cookies.get('refresh_token')
+    if refresh_token and _redis().exists(f'refresh:{refresh_token}'):
+        try:
+            refresh_decoded = jwt.decode(refresh_token, _secret(), algorithms=['HS256'], issuer=ISSUER, audience=AUDIENCE)
+            return jsonify({
+                'userId': refresh_decoded['sub'],
+                'role': refresh_decoded.get('role', 'User'),
+                'firstName': refresh_decoded.get('firstName', ''),
+                'lastName': refresh_decoded.get('lastName', ''),
+            }), 200
+        except Exception:
+            pass  # fall through to access-token-only info
+
+    return jsonify({'userId': decoded['sub'], 'role': decoded.get('role', 'User'), 'firstName': '', 'lastName': ''}), 200
 
 
 @auth_bp.route('/forgot-password', methods=['POST'])
