@@ -91,7 +91,7 @@ def get_favorite_ids():
         return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
 
 
-# POST /favorites/<product_id> — add product to favourites
+# POST /favorites/<product_id> — add product to favorites
 @favorites_bp.route('/favorites/<product_id>', methods=['POST'])
 def add_favorite(product_id):
     user_id = _extract_user_id()
@@ -117,7 +117,7 @@ def add_favorite(product_id):
         return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
 
 
-# DELETE /favorites/<product_id> — remove product from favourites
+# DELETE /favorites/<product_id> — remove product from favorites
 @favorites_bp.route('/favorites/<product_id>', methods=['DELETE'])
 def remove_favorite(product_id):
     user_id = _extract_user_id()
