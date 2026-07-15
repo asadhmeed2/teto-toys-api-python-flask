@@ -24,7 +24,7 @@ def _redis():
     return current_app.extensions['redis']
 
 
-def _generate_token(user_id, expire_delta, token_type='access', first_name=None, last_name=None):
+def _generate_token(user_id, expire_delta, token_type='access', first_name=None, last_name=None, tz=None):
     payload = {
         'sub': user_id, 'role': 'User',
         'exp': datetime.now(timezone.utc) + expire_delta,
@@ -36,6 +36,8 @@ def _generate_token(user_id, expire_delta, token_type='access', first_name=None,
         payload['firstName'] = first_name
     if last_name:
         payload['lastName'] = last_name
+    if token_type == 'refresh' and tz:
+        payload['timezone'] = tz
     return jwt.encode(payload, _secret(), algorithm='HS256')
 
 
@@ -51,6 +53,7 @@ def _set_refresh_cookie(resp, token):
 def login():
     data = request.get_json() or {}
     email, password = data.get('email'), data.get('password')
+    tz = data.get('timezone') or None
 
     if not email or not password:
         return jsonify({'error': 'invalid_request', 'error_description': 'Email and password are required.'}), 400
@@ -70,7 +73,7 @@ def login():
         db.session.commit()
 
         access_token = _generate_token(user.user_id, timedelta(minutes=15))
-        refresh_token = _generate_token(user.user_id, timedelta(days=7), 'refresh', user.first_name, user.last_name)
+        refresh_token = _generate_token(user.user_id, timedelta(days=7), 'refresh', user.first_name, user.last_name, tz)
         _redis().setex(f'refresh:{refresh_token}', REFRESH_TOKEN_TTL, '1')
 
         resp = make_response(jsonify({'access_token': access_token, 'token_type': 'Bearer', 'expires_in': 900}), 200)
