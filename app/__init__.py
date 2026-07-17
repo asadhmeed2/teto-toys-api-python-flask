@@ -48,6 +48,9 @@ def create_app(env: str = None) -> Flask:
     from app.routes.favorites import favorites_bp
     app.register_blueprint(favorites_bp, url_prefix='/api')
 
+    from app.routes.contact import contact_bp
+    app.register_blueprint(contact_bp, url_prefix='/api')
+
     @app.route('/', methods=['GET'])
     def root():
         return jsonify({'flask status': 'OK'}), 200
