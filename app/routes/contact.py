@@ -1,3 +1,5 @@
+import html
+
 from flask import Blueprint, jsonify, request
 from app.extensions import db
 
@@ -19,6 +21,14 @@ def submit_contact():
             'error': 'validation_error',
             'error_description': 'name, email, and message are required.',
         }), 400
+
+    # ponytail: HTML-encode free-text fields so a submitted <script> tag is stored
+    # as inert text, protecting any future consumer (admin UI, email digest, etc.)
+    # that renders these values, regardless of whether that consumer remembers to encode.
+    name = html.escape(name)
+    email = html.escape(email)
+    subject = html.escape(subject) if subject else None
+    message = html.escape(message)
 
     try:
         db.session.execute(
