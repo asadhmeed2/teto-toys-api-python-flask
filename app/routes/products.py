@@ -204,3 +204,15 @@ def get_categories():
         return jsonify(items), 200
     except Exception as e:
         return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
+
+
+# ponytail: GET /languages (public lookup for the storefront language selector)
+@products_bp.route('/languages', methods=['GET'])
+def get_languages():
+    try:
+        rows = db.session.execute(
+            db.text('SELECT code, name, is_rtl FROM system_languages ORDER BY code ASC')
+        ).fetchall()
+        return jsonify([{'code': r[0], 'name': r[1], 'is_rtl': bool(r[2])} for r in rows]), 200
+    except Exception as e:
+        return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
