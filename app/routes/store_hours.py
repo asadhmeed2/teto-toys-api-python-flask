@@ -51,34 +51,47 @@ def _to_minutes(value):
 
 
 def _now_in_store_timezone():
-    """Returns (day_of_week with Sunday=0, minutes since midnight, 'HH:MM')."""
+    """Returns (day_of_week with Sunday=0, minutes since midnight, 'HH:MM', resolved)."""
     now = None
+    resolved = False
+
     if ZoneInfo is not None:
         try:
             now = datetime.now(ZoneInfo(STORE_TIMEZONE))
-        except Exception:
-            now = None  # missing tzdata — fall back to server local
+            resolved = True
+        except Exception as e:
+            # Loud on purpose. Silently using server local time produces a WRONG
+            # open/closed answer whenever the host isn't in the store's zone — e.g.
+            # a UTC container reports "open" for hours after closing. Slim images may
+            # ship no IANA database; the `tzdata` PyPI package supplies one.
+            print(
+                f"[store-hours] Timezone '{STORE_TIMEZONE}' could not be resolved ({e}). "
+                'Falling back to server local time — open/closed WILL be wrong unless '
+                'the host runs in that zone. Install the tzdata package to fix.'
+            )
+            now = None
+
     if now is None:
         now = datetime.now()
 
     # Python's weekday() is Monday=0; shift to Sunday=0 to match the DB.
     day_of_week = (now.weekday() + 1) % 7
-    return day_of_week, now.hour * 60 + now.minute, now.strftime('%H:%M')
+    return day_of_week, now.hour * 60 + now.minute, now.strftime('%H:%M'), resolved
 
 
 def _compute_is_open_now(days):
-    day_of_week, minutes, label = _now_in_store_timezone()
+    day_of_week, minutes, label, resolved = _now_in_store_timezone()
 
     today = next((d for d in days if d['day_of_week'] == day_of_week), None)
     if today is None or today['is_closed']:
-        return False, label
+        return False, label, resolved
 
     open_min = _to_minutes(today['open_time'])
     close_min = _to_minutes(today['close_time'])
     if open_min is None or close_min is None:
-        return False, label
+        return False, label, resolved
 
-    return open_min <= minutes < close_min, label
+    return open_min <= minutes < close_min, label, resolved
 
 
 def _load_from_database():
@@ -126,10 +139,13 @@ def get_store_hours():
 
         # 3. is_open_now is always computed fresh — never cached, or a stale "true"
         #    could outlive closing time by up to the full TTL.
-        is_open_now, server_time = _compute_is_open_now(days)
+        is_open_now, server_time, tz_resolved = _compute_is_open_now(days)
 
         return jsonify({
             'timezone': STORE_TIMEZONE,
+            # False => the host lacks IANA tz data and the times below are
+            # server-local, not store-local. Surfaced so it's visible without logs.
+            'timezone_resolved': tz_resolved,
             'server_time': server_time,
             'is_open_now': is_open_now,
             'days': days,
