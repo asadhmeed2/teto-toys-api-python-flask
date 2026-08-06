@@ -38,6 +38,11 @@ def create_app(env: str = None) -> Flask:
     ext.redis_client = redis_lib.Redis(connection_pool=pool)
     app.extensions['redis'] = ext.redis_client
 
+    # Rate limiting, registered before the blueprints so its before_request hook
+    # runs ahead of any route handler. Requires ext.redis_client, set just above.
+    from app.middleware.rate_limit import register_rate_limiter
+    register_rate_limiter(app)
+
     # Blueprints
     from app.routes.auth import auth_bp
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
