@@ -1,17 +1,19 @@
 """
-Per-IP request limits, counted in Redis so every instance shares one budget.
+Per-IP token bucket, held in Redis so every instance shares one budget.
 
-Fixed-window counter: INCR a key named for the current window, set its TTL on
-first hit, reject once the count exceeds the limit. Cheap (one round trip) and
-good enough to stop floods and credential stuffing. The trade-off versus a
-sliding window is burstiness at window boundaries — a client can spend its full
-budget at the end of one window and again at the start of the next.
+Each client gets a bucket of RATE_LIMIT_*_BURST tokens that refills continuously
+at limit/window tokens per second. A request spends one token; if the bucket is
+empty the request is rejected.
 
-Key format matches the other backends: ratelimit:{service}:{scope}:{ip}:{window}
+Chosen over a fixed window because a fixed window lets a client spend its whole
+budget at the end of one window and again at the start of the next — a 2x burst at
+the boundary. A bucket smooths that out: burst size is capped by capacity and the
+long-run average can never exceed the refill rate.
+
+Key format matches the other backends: ratelimit:{service}:{scope}:{ip}
 """
 
 import os
-import time
 
 from flask import jsonify, request
 
@@ -20,11 +22,17 @@ import app.extensions as ext
 SERVICE_NAME = os.getenv('RATE_LIMIT_SERVICE', 'storefront-flask')
 
 ENABLED = os.getenv('RATE_LIMIT_ENABLED', 'true').lower() != 'false'
+
+# Sustained rate: LIMIT tokens per WINDOW seconds. BURST is the bucket capacity
+# (largest instantaneous burst) and defaults to the limit.
 GLOBAL_LIMIT = int(os.getenv('RATE_LIMIT_GLOBAL', '100'))
 GLOBAL_WINDOW = int(os.getenv('RATE_LIMIT_GLOBAL_WINDOW', '60'))
+GLOBAL_BURST = int(os.getenv('RATE_LIMIT_GLOBAL_BURST', str(GLOBAL_LIMIT)))
+
 # Login/refresh/register/reset are what actually get brute-forced.
 AUTH_LIMIT = int(os.getenv('RATE_LIMIT_AUTH', '10'))
 AUTH_WINDOW = int(os.getenv('RATE_LIMIT_AUTH_WINDOW', '60'))
+AUTH_BURST = int(os.getenv('RATE_LIMIT_AUTH_BURST', str(AUTH_LIMIT)))
 
 STRICT_PREFIXES = [
     p.strip()
@@ -35,6 +43,66 @@ STRICT_PREFIXES = [
 # X-Forwarded-For is client-settable, so only trust it behind a proxy you control —
 # otherwise anyone can forge an identity and sidestep the limit entirely.
 TRUST_FORWARDED = os.getenv('RATE_LIMIT_TRUST_PROXY', 'false').lower() == 'true'
+
+# Token bucket, evaluated atomically so concurrent requests can't both read the
+# same token count and each decide they may proceed.
+#
+# Time comes from redis.call('TIME'), not the caller: instances may have skewed
+# clocks, and the bucket must advance on a single shared timeline. Safe to
+# replicate since Redis 5 propagates script *effects* rather than the script.
+#
+# Must stay byte-identical to the C# and node copies so all services agree.
+TOKEN_BUCKET_SCRIPT = """
+local key      = KEYS[1]
+local capacity = tonumber(ARGV[1])
+local refill   = tonumber(ARGV[2])
+local wanted   = tonumber(ARGV[3])
+
+local t   = redis.call('TIME')
+local now = tonumber(t[1]) + (tonumber(t[2]) / 1000000)
+
+local bucket = redis.call('HMGET', key, 'tokens', 'ts')
+local tokens = tonumber(bucket[1])
+local ts     = tonumber(bucket[2])
+
+if tokens == nil or ts == nil then
+  tokens = capacity
+  ts     = now
+end
+
+local elapsed = now - ts
+if elapsed > 0 then
+  tokens = math.min(capacity, tokens + (elapsed * refill))
+end
+
+local allowed = 0
+if tokens >= wanted then
+  tokens  = tokens - wanted
+  allowed = 1
+end
+
+redis.call('HSET', key, 'tokens', tokens, 'ts', now)
+-- Reclaim idle buckets once they would have refilled completely.
+redis.call('EXPIRE', key, math.ceil(capacity / refill) + 1)
+
+local retry = 0
+if allowed == 0 then
+  retry = math.ceil((wanted - tokens) / refill)
+end
+
+return { allowed, math.floor(tokens), retry }
+"""
+
+# Populated on first use; register_script calls via EVALSHA and falls back to EVAL
+# automatically if the server has forgotten the script (e.g. after SCRIPT FLUSH).
+_token_bucket = None
+
+
+def _get_script():
+    global _token_bucket
+    if _token_bucket is None and ext.redis_client is not None:
+        _token_bucket = ext.redis_client.register_script(TOKEN_BUCKET_SCRIPT)
+    return _token_bucket
 
 
 def _resolve_client_id():
@@ -60,41 +128,42 @@ def register_rate_limiter(app):
 
         limit = AUTH_LIMIT if is_strict else GLOBAL_LIMIT
         window = max(1, AUTH_WINDOW if is_strict else GLOBAL_WINDOW)
+        capacity = max(1, AUTH_BURST if is_strict else GLOBAL_BURST)
         scope = 'auth' if is_strict else 'global'
 
-        now = int(time.time())
-        window_index = now // window
-        key = f'ratelimit:{SERVICE_NAME}:{scope}:{_resolve_client_id()}:{window_index}'
+        # Tokens per second. Guarded so a misconfigured 0 limit can't divide by zero.
+        refill_per_second = max(0.0001, limit / window)
+        key = f'ratelimit:{SERVICE_NAME}:{scope}:{_resolve_client_id()}'
 
         try:
-            count = ext.redis_client.incr(key)
-            # Only the request that created the key sets the TTL, so the window
-            # doesn't slide forward on every hit.
-            if count == 1:
-                ext.redis_client.expire(key, window)
+            script = _get_script()
+            allowed_flag, tokens_left, retry = script(
+                keys=[key], args=[capacity, refill_per_second, 1]
+            )
+            allowed = int(allowed_flag) == 1
+            remaining = int(tokens_left)
+            retry_after = max(1, int(retry))
         except Exception as e:
             # Fail open. A Redis outage must degrade to "unlimited", never to "down".
             print(f'Rate limit check failed, allowing request: {e}')
             return None
 
-        reset_seconds = max(1, (window_index + 1) * window - now)
-
         # Stashed for after_request, which attaches them to every response.
         request.rate_limit_headers = {
-            'X-RateLimit-Limit': str(limit),
-            'X-RateLimit-Remaining': str(max(0, limit - count)),
-            'X-RateLimit-Reset': str(reset_seconds),
+            'X-RateLimit-Limit': str(capacity),
+            'X-RateLimit-Remaining': str(max(0, remaining)),
         }
 
-        if count > limit:
+        if not allowed:
             response = jsonify({
                 'error': 'rate_limited',
                 'error_description': (
-                    f'Too many requests. Please try again in {reset_seconds} seconds.'
+                    f'Too many requests. Please try again in {retry_after} seconds.'
                 ),
             })
             response.status_code = 429
-            response.headers['Retry-After'] = str(reset_seconds)
+            response.headers['Retry-After'] = str(retry_after)
+            response.headers['X-RateLimit-Reset'] = str(retry_after)
             for header, value in request.rate_limit_headers.items():
                 response.headers[header] = value
             return response
