@@ -17,7 +17,7 @@ REFRESH_TOKEN_TTL = 7 * 24 * 60 * 60  # 7 days in seconds
 
 
 def _secret():
-    return current_app.config.get('JWT_SECRET', os.getenv('JWT_SECRET', 'SuperSecretKeyForTetoToysTokenAuth2026'))
+    return current_app.config.get('JWT_SECRET', os.getenv('JWT_SECRET'))
 
 
 def _redis():

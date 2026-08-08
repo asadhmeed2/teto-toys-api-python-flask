@@ -10,7 +10,7 @@ AUDIENCE = 'tatotoys-frontend'
 
 
 def _secret():
-    return current_app.config.get('JWT_SECRET', os.getenv('JWT_SECRET', 'SuperSecretKeyForTetoToysTokenAuth2026'))
+    return current_app.config.get('JWT_SECRET', os.getenv('JWT_SECRET'))
 
 
 def _extract_user_id():
