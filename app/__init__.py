@@ -38,6 +38,10 @@ def create_app(env: str = None) -> Flask:
     ext.redis_client = redis_lib.Redis(connection_pool=pool)
     app.extensions['redis'] = ext.redis_client
 
+    # Response hardening — after_request, so it also covers error and 429 responses.
+    from app.middleware.security_headers import register_security_headers
+    register_security_headers(app)
+
     # Rate limiting, registered before the blueprints so its before_request hook
     # runs ahead of any route handler. Requires ext.redis_client, set just above.
     from app.middleware.rate_limit import register_rate_limiter

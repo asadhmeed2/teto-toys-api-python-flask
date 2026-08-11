@@ -2,7 +2,7 @@ import json
 import os
 from datetime import datetime, timedelta
 
-from flask import Blueprint, jsonify
+from flask import Blueprint, jsonify, current_app
 
 import app.extensions as ext
 from app.extensions import db
@@ -151,4 +151,7 @@ def get_store_hours():
             'days': days,
         }), 200
     except Exception as e:
-        return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
+        # Log the detail, return a generic body: exception text leaks table
+        # names, SQL fragments and stack context to the caller.
+        current_app.logger.exception('Unhandled error: %s', e)
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500

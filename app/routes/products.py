@@ -1,5 +1,5 @@
 import json
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from app.extensions import db
 
 products_bp = Blueprint('products', __name__)
@@ -100,7 +100,10 @@ def get_products():
             'total_pages': total_pages
         }), 200
     except Exception as e:
-        return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
+        # Log the detail, return a generic body: exception text leaks table
+        # names, SQL fragments and stack context to the caller.
+        current_app.logger.exception('Unhandled error: %s', e)
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500
 
 
 # ponytail: GET /parts (public storefront endpoint)
@@ -175,7 +178,10 @@ def get_parts():
             'total_pages': total_pages
         }), 200
     except Exception as e:
-        return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
+        # Log the detail, return a generic body: exception text leaks table
+        # names, SQL fragments and stack context to the caller.
+        current_app.logger.exception('Unhandled error: %s', e)
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500
 
 
 # ponytail: GET /categories (public storefront endpoint)
@@ -203,7 +209,10 @@ def get_categories():
             
         return jsonify(items), 200
     except Exception as e:
-        return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
+        # Log the detail, return a generic body: exception text leaks table
+        # names, SQL fragments and stack context to the caller.
+        current_app.logger.exception('Unhandled error: %s', e)
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500
 
 
 # ponytail: GET /languages (public lookup for the storefront language selector)
@@ -215,4 +224,7 @@ def get_languages():
         ).fetchall()
         return jsonify([{'code': r[0], 'name': r[1], 'is_rtl': bool(r[2])} for r in rows]), 200
     except Exception as e:
-        return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
+        # Log the detail, return a generic body: exception text leaks table
+        # names, SQL fragments and stack context to the caller.
+        current_app.logger.exception('Unhandled error: %s', e)
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500

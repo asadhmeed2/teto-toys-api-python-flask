@@ -8,6 +8,11 @@ from datetime import datetime, timedelta, timezone
 from app.extensions import db
 from app.models.user import User
 from app.services.email_service import send_password_reset_email
+from app.middleware.login_attempts import (
+    get_lockout_remaining,
+    record_failure,
+    reset_attempts,
+)
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -61,13 +66,36 @@ def login():
         return jsonify({'error': 'invalid_request', 'error_description': 'Password must be at least 8 characters.'}), 400
 
     try:
+        # Per-account throttle: caps guesses against one email regardless of how
+        # many IPs are used, which the per-IP rate limiter cannot do.
+        lockout_remaining = get_lockout_remaining(email)
+        if lockout_remaining > 0:
+            resp = jsonify({
+                'error': 'too_many_attempts',
+                'error_description': (
+                    f'Too many failed login attempts. '
+                    f'Please try again in {lockout_remaining} seconds.'
+                ),
+            })
+            resp.status_code = 429
+            resp.headers['Retry-After'] = str(lockout_remaining)
+            return resp
+
         user = User.query.filter_by(email=email).first()
+
+        # Count unknown accounts too. Skipping them would make a wrong email fail
+        # differently from a wrong password, which is an enumeration oracle.
         if not user:
+            record_failure(email)
             return jsonify({'error': 'invalid_grant', 'error_description': 'Invalid email or password.'}), 401
         if not user.is_active:
+            record_failure(email)
             return jsonify({'error': 'invalid_grant', 'error_description': 'Account is deactivated.'}), 401
         if not bcrypt.checkpw(password.encode(), user.password_hash.encode()):
+            record_failure(email)
             return jsonify({'error': 'invalid_grant', 'error_description': 'Invalid email or password.'}), 401
+
+        reset_attempts(email)
 
         user.last_login = datetime.now(timezone.utc)
         db.session.commit()

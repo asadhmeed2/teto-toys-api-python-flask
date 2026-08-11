@@ -1,6 +1,6 @@
 import html
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, current_app
 from app.extensions import db
 
 contact_bp = Blueprint('contact', __name__)
@@ -46,4 +46,7 @@ def submit_contact():
         }), 201
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
+        # Log the detail, return a generic body: exception text leaks table
+        # names, SQL fragments and stack context to the caller.
+        current_app.logger.exception('Unhandled error: %s', e)
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500

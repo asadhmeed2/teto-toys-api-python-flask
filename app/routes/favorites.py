@@ -70,7 +70,10 @@ def get_favorites():
 
         return jsonify({'items': items}), 200
     except Exception as e:
-        return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
+        # Log the detail, return a generic body: exception text leaks table
+        # names, SQL fragments and stack context to the caller.
+        current_app.logger.exception('Unhandled error: %s', e)
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500
 
 
 # GET /favorites/ids — return only favourite product IDs
@@ -88,7 +91,10 @@ def get_favorite_ids():
         ids = [str(row[0]) for row in rows]
         return jsonify({'ids': ids}), 200
     except Exception as e:
-        return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
+        # Log the detail, return a generic body: exception text leaks table
+        # names, SQL fragments and stack context to the caller.
+        current_app.logger.exception('Unhandled error: %s', e)
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500
 
 
 # POST /favorites/<product_id> — add product to favorites
@@ -114,7 +120,10 @@ def add_favorite(product_id):
         return jsonify({'product_id': product_id, 'is_favorite': True}), 200
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
+        # Log the detail, return a generic body: exception text leaks table
+        # names, SQL fragments and stack context to the caller.
+        current_app.logger.exception('Unhandled error: %s', e)
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500
 
 
 # DELETE /favorites/<product_id> — remove product from favorites
@@ -133,4 +142,7 @@ def remove_favorite(product_id):
         return jsonify({'product_id': product_id, 'is_favorite': False}), 200
     except Exception as e:
         db.session.rollback()
-        return jsonify({'error': 'server_error', 'error_description': str(e)}), 500
+        # Log the detail, return a generic body: exception text leaks table
+        # names, SQL fragments and stack context to the caller.
+        current_app.logger.exception('Unhandled error: %s', e)
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500
