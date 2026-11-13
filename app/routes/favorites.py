@@ -24,6 +24,9 @@ def _extract_user_id():
             token, _secret(), algorithms=['HS256'],
             issuer=ISSUER, audience=AUDIENCE,
         )
+        # Refresh tokens share the signing key but must never pass as a Bearer access token.
+        if decoded.get('token_type') == 'refresh':
+            return None
         return decoded.get('sub')
     except Exception:
         return None

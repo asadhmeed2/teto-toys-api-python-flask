@@ -103,6 +103,9 @@ def login():
         access_token = _generate_token(user.user_id, timedelta(minutes=15))
         refresh_token = _generate_token(user.user_id, timedelta(days=7), 'refresh', user.first_name, user.last_name, tz)
         _redis().setex(f'refresh:{refresh_token}', REFRESH_TOKEN_TTL, '1')
+        # Per-user index so a password reset can revoke every session. Key shared with C#/node.
+        _redis().sadd(f'user_refresh:{user.user_id}', refresh_token)
+        _redis().expire(f'user_refresh:{user.user_id}', REFRESH_TOKEN_TTL)
 
         resp = make_response(jsonify({'access_token': access_token, 'token_type': 'Bearer', 'expires_in': 900}), 200)
         _set_refresh_cookie(resp, refresh_token)
@@ -197,6 +200,8 @@ def me():
         return jsonify({'error': 'unauthorized', 'error_description': 'Token has expired.'}), 401
     except Exception:
         return jsonify({'error': 'unauthorized', 'error_description': 'Token is invalid or expired.'}), 401
+    if decoded.get('token_type') == 'refresh':
+        return jsonify({'error': 'unauthorized', 'error_description': 'Token is invalid or expired.'}), 401
 
     # The refresh token carries first/last name — pull it from there for the full profile
     refresh_token = request.cookies.get('refresh_token')
@@ -267,6 +272,10 @@ def reset_password():
 
         user.password_hash = bcrypt.hashpw(new_pw.encode(), bcrypt.gensalt(rounds=12)).decode()
         db.session.commit()
+
+        # Log out every existing session — an attacker's stolen session must not survive the reset.
+        sessions = _redis().smembers(f'user_refresh:{user_id}')
+        _redis().delete(f'user_refresh:{user_id}', *[f"refresh:{t.decode() if isinstance(t, bytes) else t}" for t in sessions])
         return jsonify({'message': 'Password has been reset successfully.'}), 200
     except Exception as e:
         db.session.rollback()
