@@ -23,13 +23,18 @@ HEADERS = {
     # The API needs none of these device APIs; deny them explicitly.
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
     'X-Permitted-Cross-Domain-Policies': 'none',
+    # JSON never needs to load anything or be framed; also neuters any HTML error page.
+    'Content-Security-Policy': "default-src 'none'; frame-ancestors 'none'",
+    'Cross-Origin-Resource-Policy': 'same-site',
+    # Responses carry tokens and per-user data; no browser or proxy may cache them.
+    'Cache-Control': 'no-store',
 }
 
 
 def register_security_headers(app):
     """Attaches the headers to every response, including error responses."""
 
-    is_production = os.getenv('FLASK_ENV', 'development').lower() == 'production'
+    is_production = os.getenv('FLASK_ENV', 'production').lower() == 'production'
 
     @app.after_request
     def _apply_security_headers(response):

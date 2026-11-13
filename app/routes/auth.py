@@ -49,7 +49,8 @@ def _generate_token(user_id, expire_delta, token_type='access', first_name=None,
 def _set_refresh_cookie(resp, token):
     resp.set_cookie(
         'refresh_token', token, httponly=True, samesite='Strict',
-        secure=current_app.config.get('ENV') == 'production',
+        # Flask 3 removed config['ENV']; read the same env var the rest of the app uses.
+        secure=os.getenv('FLASK_ENV', 'production').lower() == 'production',
         max_age=REFRESH_TOKEN_TTL, path='/',
     )
 

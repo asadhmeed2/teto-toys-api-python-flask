@@ -4,12 +4,11 @@ import os
 
 class Config:
     SQLALCHEMY_TRACK_MODIFICATIONS = False
-    SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret')
 
     DB_HOST = os.getenv('DB_HOST', 'localhost')
     DB_PORT = os.getenv('DB_PORT', '3306')
     DB_USER = os.getenv('MYSQL_USER', 'TetoToys')
-    DB_PASS = os.getenv('MYSQL_PASSWORD', 'YourSqlPassword')
+    DB_PASS = os.environ['MYSQL_PASSWORD']  # no default: fail at boot, never run on a guessable password
     DB_NAME = os.getenv('MYSQL_DATABASE', 'TetoToys')
     SQLALCHEMY_DATABASE_URI = (
         f"mysql+pymysql://{DB_USER}:{DB_PASS}@{DB_HOST}:{DB_PORT}/{DB_NAME}"
@@ -37,5 +36,6 @@ class ProductionConfig(Config):
 configs = {
     'development': DevelopmentConfig,
     'production': ProductionConfig,
-    'default': DevelopmentConfig,
+    # Secure by default: debug only when FLASK_ENV=development is set explicitly.
+    'default': ProductionConfig,
 }

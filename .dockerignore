@@ -32,3 +32,4 @@ venv
 **/values.dev.yaml
 LICENSE
 README.md
+**/.codegraph

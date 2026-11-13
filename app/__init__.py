@@ -1,6 +1,7 @@
 import os
 import redis as redis_lib
 from flask import Flask, jsonify
+from werkzeug.exceptions import HTTPException
 from flask_cors import CORS
 from dotenv import load_dotenv
 from app.config import configs
@@ -10,7 +11,7 @@ import app.extensions as ext
 
 def create_app(env: str = None) -> Flask:
     load_dotenv()
-    env = env or os.getenv('FLASK_ENV', 'development')
+    env = env or os.getenv('FLASK_ENV', 'production')
     app = Flask(__name__)
     app.config.from_object(configs.get(env, configs['default']))
 
@@ -65,6 +66,17 @@ def create_app(env: str = None) -> Flask:
 
     @app.route('/', methods=['GET'])
     def root():
-        return jsonify({'flask status': 'OK'}), 200
+        return jsonify({'status': 'ok'}), 200
+
+    # Central error handling: every error is JSON in the API's {error, error_description}
+    # shape — never Werkzeug's HTML page or a traceback.
+    @app.errorhandler(HTTPException)
+    def _http_error(e):
+        return jsonify({'error': e.name.lower().replace(' ', '_'), 'error_description': e.description}), e.code
+
+    @app.errorhandler(Exception)
+    def _unhandled_error(e):
+        app.logger.exception(e)
+        return jsonify({'error': 'server_error', 'error_description': 'An internal error occurred.'}), 500
 
     return app
