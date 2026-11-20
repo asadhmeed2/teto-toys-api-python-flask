@@ -1,0 +1,11 @@
+# Weekly dependency + base-image update PRs and security alerts (OWASP A03).
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "weekly"
