@@ -48,6 +48,17 @@ def create_app(env: str = None) -> Flask:
     from app.middleware.rate_limit import register_rate_limiter
     register_rate_limiter(app)
 
+    # Request bodies here are flat: a dict/list where a string belongs is the
+    # object-injection vector (and crashes .strip()), so reject it at the door.
+    # ponytail: top-level only; give a route a schema if it ever needs nested JSON.
+    from flask import request
+
+    @app.before_request
+    def reject_nested_json():
+        body = request.get_json(silent=True)
+        if isinstance(body, list) or (isinstance(body, dict) and any(isinstance(v, (dict, list)) for v in body.values())):
+            return jsonify({'error': 'invalid_request', 'error_description': 'Body fields must be plain values.'}), 400
+
     # Blueprints
     from app.routes.auth import auth_bp
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
