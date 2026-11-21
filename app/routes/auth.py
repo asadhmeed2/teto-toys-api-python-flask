@@ -1,6 +1,8 @@
 from flask import Blueprint, jsonify, request, make_response, current_app
+import hashlib
 import os
 import re
+import secrets
 import uuid
 import jwt
 import bcrypt
@@ -27,6 +29,11 @@ def _secret():
 
 def _redis():
     return current_app.extensions['redis']
+
+
+def _h(token):
+    # Tokens are credentials: Redis stores only their SHA-256 (same hex as C#/node, which share these keys).
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 def _generate_token(user_id, expire_delta, token_type='access', first_name=None, last_name=None, tz=None):
@@ -103,9 +110,9 @@ def login():
 
         access_token = _generate_token(user.user_id, timedelta(minutes=15))
         refresh_token = _generate_token(user.user_id, timedelta(days=7), 'refresh', user.first_name, user.last_name, tz)
-        _redis().setex(f'refresh:{refresh_token}', REFRESH_TOKEN_TTL, '1')
+        _redis().setex(f'refresh:{_h(refresh_token)}', REFRESH_TOKEN_TTL, '1')
         # Per-user index so a password reset can revoke every session. Key shared with C#/node.
-        _redis().sadd(f'user_refresh:{user.user_id}', refresh_token)
+        _redis().sadd(f'user_refresh:{user.user_id}', _h(refresh_token))
         _redis().expire(f'user_refresh:{user.user_id}', REFRESH_TOKEN_TTL)
 
         resp = make_response(jsonify({'access_token': access_token, 'token_type': 'Bearer', 'expires_in': 900}), 200)
@@ -120,7 +127,7 @@ def login():
 @auth_bp.route('/refresh', methods=['POST'])
 def refresh():
     refresh_token = request.cookies.get('refresh_token')
-    if not refresh_token or not _redis().exists(f'refresh:{refresh_token}'):
+    if not refresh_token or not _redis().exists(f'refresh:{_h(refresh_token)}'):
         return jsonify({'error': 'invalid_token', 'error_description': 'Missing or invalid refresh token.'}), 401
 
     try:
@@ -138,7 +145,7 @@ def refresh():
 def logout():
     refresh_token = request.cookies.get('refresh_token')
     if refresh_token:
-        _redis().delete(f'refresh:{refresh_token}')
+        _redis().delete(f'refresh:{_h(refresh_token)}')
     resp = make_response(jsonify({'message': 'Logged out successfully'}), 200)
     resp.delete_cookie('refresh_token', path='/')
     return resp
@@ -162,6 +169,9 @@ def register():
         return jsonify({'error': 'invalid_request', 'error_description': 'Please enter a valid email address.'}), 400
     if len(password) < 8:
         return jsonify({'error': 'invalid_request', 'error_description': 'Password must be at least 8 characters.'}), 400
+    # bcrypt ignores bytes past 72; reject instead of silently truncating (bcrypt>=5 raises).
+    if len(password.encode()) > 72:
+        return jsonify({'error': 'invalid_request', 'error_description': 'Password must be at most 72 bytes.'}), 400
     if password != confirm:
         return jsonify({'error': 'invalid_request', 'error_description': 'Passwords do not match.'}), 400
     if not is_adult:
@@ -206,7 +216,7 @@ def me():
 
     # The refresh token carries first/last name — pull it from there for the full profile
     refresh_token = request.cookies.get('refresh_token')
-    if refresh_token and _redis().exists(f'refresh:{refresh_token}'):
+    if refresh_token and _redis().exists(f'refresh:{_h(refresh_token)}'):
         try:
             refresh_decoded = jwt.decode(refresh_token, _secret(), algorithms=['HS256'], issuer=ISSUER, audience=AUDIENCE)
             return jsonify({
@@ -230,8 +240,8 @@ def forgot_password():
     try:
         user = User.query.filter_by(email=email).first()
         if user and user.is_active:
-            token = uuid.uuid4().hex + uuid.uuid4().hex
-            _redis().setex(f'reset:{token}', 15 * 60, user.user_id)
+            token = secrets.token_hex(32)
+            _redis().setex(f'reset:{_h(token)}', 15 * 60, user.user_id)
             reset_link = f"{current_app.config['FRONTEND_BASE_URL']}/reset-password?token={token}"
             send_password_reset_email(
                 user.email, reset_link,
@@ -255,15 +265,18 @@ def reset_password():
         return jsonify({'error': 'invalid_request', 'error_description': 'Token is required.'}), 400
     if not new_pw or len(new_pw) < 8:
         return jsonify({'error': 'invalid_request', 'error_description': 'Password must be at least 8 characters.'}), 400
+    # bcrypt ignores bytes past 72; reject instead of silently truncating (bcrypt>=5 raises).
+    if len(new_pw.encode()) > 72:
+        return jsonify({'error': 'invalid_request', 'error_description': 'Password must be at most 72 bytes.'}), 400
     if new_pw != confirm:
         return jsonify({'error': 'invalid_request', 'error_description': 'Passwords do not match.'}), 400
 
     try:
-        user_id = _redis().get(f'reset:{token}')
+        user_id = _redis().get(f'reset:{_h(token)}')
         if not user_id:
             return jsonify({'error': 'invalid_token', 'error_description': 'Reset token is invalid or has expired.'}), 400
 
-        _redis().delete(f'reset:{token}')
+        _redis().delete(f'reset:{_h(token)}')
         if isinstance(user_id, bytes):
             user_id = user_id.decode()
 
